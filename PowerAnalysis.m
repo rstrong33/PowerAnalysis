@@ -13,67 +13,102 @@ end
 if any(prefs.data(:) > 1)
     prefs.data = prefs.data/100;
     warning('Data appears to be in percentage format. Converting to decimal (e.g., 50 => .50)')
-    pause(5);
+    pause(2);
 end
 
 %simulation info
-nExp = prefs.nSims; %number of experiments to simulate
-nSubs_InData = size(prefs.data, 1); %how many subjects in actual data
-subs = prefs.N_range; %number of subs per simulation
+nSims = prefs.nSims; %number of experiments to simulate
+nPilotSubs = size(prefs.data, 1); %how many subjects in actual data
+sub_vector = prefs.N_range; %number of subs per simulation
 trial_vector = fliplr(prefs.trial_range); %number of trials per condition
-nConds = size(prefs.data,2);
-nComps = size(prefs.comps, 1);
+nComps = size(prefs.comps, 1); %number of comparisons of interest
+nConds = size(prefs.data,2); %number of conditions
 
-for trial_count = 1:length(trial_vector)
+%preallocate
+power = zeros(length(trial_vector), length(sub_vector));
+sample_size = zeros(length(trial_vector), length(sub_vector));
+num_trials = zeros(length(trial_vector), length(sub_vector));
+dz_vect = cell(1, nComps);
+
+for trial_count= 1:length(trial_vector)
     
-    nTrials = trial_vector(trial_count);
+    t = trial_vector(trial_count);
     
-    for sub_count = 1:length(subs)
+    %determine condition difference pdf for each subject in pilot data
+    cFinal = zeros(nPilotSubs, (t+1)^nConds);
+    outcomes = 1:(t+1)^nConds;
+    
+    %calculate measurement variability for each subject based upon 
+    %condition means and number of trials
+    for n = 1:nPilotSubs
+        
+        cond_probs = cell(1, nConds);
+        for c = 1:nConds
+            cond_probs{c} = binopdf(0:t, t, prefs.data(n,c));
+        end
+        
+        %first two conditions
+        tmp =  cond_probs{1}' * cond_probs{2};
+        tmp = reshape(tmp, numel(tmp), 1);
+        
+        %additional conditions
+        if nConds > 2
+            for c = 3:nConds
+                tmp = reshape(tmp*cond_probs{c}, numel(tmp)*length(cond_probs{c}), 1);
+            end
+        end
+        
+        cond_score = cell(1, nConds);
+        for c = 1:nConds
+           cond_score{c} = repmat(repelem(0:t, (t+1)^(c-1))', (t+1)^(nConds-c), 1);
+        end
+        
+        cFinal(n, :) = tmp;
+    end
+    
+    %figure out sampling variability based upon number of subjects
+    for sub_count = 1:length(sub_vector)
         
         clc
-        display([num2str(round(100*((trial_count-1)*length(subs) + sub_count)/(length(subs)*length(trial_vector)))), '% Complete']);
+        disp([num2str(round(100*((trial_count-1)*length(sub_vector) + sub_count - 1)...
+            /(length(trial_vector)*length(sub_vector)))), '% Complete']);
         
-        nSubs = subs(sub_count);
-        randsubs = randi(nSubs_InData, 1, nSubs * nExp);
-
-        for cond = 1:nConds
-            percent_correct{cond} = repmat(prefs.data(randsubs, cond), 1, nTrials);
-            sim_data1{cond} = rand(nSubs * nExp, nTrials) <= percent_correct{cond};
-            
-            sim_data2{cond} = reshape(sim_data1{cond}', nTrials, nSubs, nExp);    
-            sim_data3{cond} = permute(sim_data2{cond}, [2 1 3]);
-            acc_within_sub{cond} = squeeze(mean(sim_data3{cond}, 2));
-        end
-              
-        n(trial_count, sub_count) = nSubs;
-        num_trials(trial_count, sub_count) = nTrials;
+        %number of subjects to simulate
+        nSubs = sub_vector(sub_count);
+        outcome_samples = randsample(outcomes, nSims*nSubs, 'true', mean(cFinal));
+        sample_size(trial_count, sub_count) = nSubs;
+        num_trials(trial_count, sub_count) = t;
         
         % do condition comparisons
+        %p = cell(1, nComps);
+        power_marker = zeros(nComps, nSims);
         for comp = 1:nComps
-            diff_scores = acc_within_sub{prefs.comps(comp,1)} - acc_within_sub{prefs.comps(comp,2)};
-            
-            dz_vect{comp} = mean(diff_scores, 1)./std(diff_scores, 0, 1);
-            dz.COMP{comp}(trial_count, sub_count) = mean(dz_vect{comp});
-            [~,p.COMP{comp}] = ttest(diff_scores);
-            power_marker(comp, :) = p.COMP{comp} < prefs.alpha & dz_vect{comp} > 0;
-            
+            diff_scores = cond_score{prefs.comps(comp,1)}(outcome_samples) - cond_score{prefs.comps(comp,2)}(outcome_samples);
+            diff_scores = reshape(diff_scores, nSubs, nSims);
+            dz_vect{comp}{trial_count, sub_count} = mean(diff_scores)./std(diff_scores);
+            [~,p] = ttest(diff_scores);
+            power_marker(comp, :) = p < prefs.alpha & dz_vect{comp}{trial_count, sub_count} > 0;
         end
         
         power(trial_count, sub_count) = mean(all(power_marker, 1));
-        
     end
-    
 end
 
-power_results.power = power;
-power_results.n = n;
-power_results.num_trials = num_trials;
-power_results.dz = dz;
+clc
+disp('100% Complete')
 
+%output information
+power_results.power = power; %power for each simulated design
+power_results.n = sample_size; %sample size for each simulated design
+power_results.num_trials = num_trials; %number of trials for each design
+power_results.dz_vect = dz_vect; %effect size vector for each design
+
+
+%plot
 figure(1)
 clf
 power = round(power, 2);
-heatmap(power, subs, trial_vector, true, 'GridLines', '-', 'FontSize', 14);
+heatmap(power, sub_vector, trial_vector, true, 'GridLines', '-', 'FontSize', 14);
 xlabel('# of Subjects', 'FontSize', 20)
 ylabel('# of Trials Per Condition', 'FontSize', 20)
 title('Power by N and # of Trials', 'FontSize', 20)
@@ -672,8 +707,8 @@ if ~isempty(axInfo)
     catch %#ok<CTCH>
         val = num2str(axInfo.mat(pos(2), pos(1)));
     end
-    if isempty(axInfo.xlab), i = int2str(pos(1)); else i = axInfo.xlab{pos(1)}; end
-    if isempty(axInfo.ylab), j = int2str(pos(2)); else j = axInfo.ylab{pos(2)}; end
+    if isempty(axInfo.xlab), i = int2str(pos(1)); else, i = axInfo.xlab{pos(1)}; end
+    if isempty(axInfo.ylab), j = int2str(pos(2)); else, j = axInfo.ylab{pos(2)}; end
     output_txt = sprintf('X: %s\nY: %s\nVal: %s', i, j, val);
     
 else
@@ -859,7 +894,7 @@ if zeroInd <= 1 % Just green
     b = interp1([1 clevels], [1 0], 1:clevels);
     g = interp1([1 clevels], [1 1], 1:clevels);
     r = interp1([1 clevels], [1 0], 1:clevels);
-elseif zeroInd >= clevels, % Just red
+elseif zeroInd >= clevels % Just red
     b = interp1([1 clevels], [0 1], 1:clevels);
     g = interp1([1 clevels], [0 1], 1:clevels);
     r = interp1([1 clevels], [1 1], 1:clevels);
