@@ -16,6 +16,18 @@ if any(prefs.data(:) > 1)
     pause(2);
 end
 
+%main power analysis
+if prefs.within_between == 1
+    power_results = PowerAnalysisWithin(prefs);
+elseif prefs.within_between == 2
+    power_results = PowerAnalysisBetween(prefs);
+end
+
+end
+
+%within subjects design function
+function power_results = PowerAnalysisWithin(prefs)
+
 %simulation info
 nSims = prefs.nSims; %number of experiments to simulate
 nPilotSubs = size(prefs.data, 1); %how many subjects in actual data
@@ -107,12 +119,136 @@ power_results.dz_vect = dz_vect; %effect size vector for each design
 %plot
 figure(1)
 clf
-power = round(power, 2);
-heatmap(power, sub_vector, trial_vector, true, 'GridLines', '-', 'FontSize', 14);
-xlabel('# of Subjects', 'FontSize', 20)
-ylabel('# of Trials Per Condition', 'FontSize', 20)
-title('Power by N and # of Trials', 'FontSize', 20)
 
+power = round(power, 2);
+
+if all(all(power == 0))
+    xlim([0,1])
+    ylim([0,1])
+    text(.27, .5,'Cannot Display Heatmap', 'FontSize', 20)
+    text(.2, .4,'Power for all study designs is 0%', 'FontSize', 20)
+else
+    
+    heatmap(power, sub_vector, trial_vector, true, 'GridLines', '-', 'FontSize', 14);
+    xlabel('# of Subjects', 'FontSize', 20)
+    ylabel('# of Trials Per Condition', 'FontSize', 20)
+    title('Power by N and # of Trials', 'FontSize', 20)
+end
+
+end
+
+function power_results = PowerAnalysisBetween(prefs)
+%check to see if data is in decimal form (not percentage)
+%if so, divide by 100
+if sum(prefs.condition_allocation) ~= 1
+    error('Condition allocation does not add up to 1 (100%). Use fractions if this is due to rounding error (e.g., use 1/3 instead of .33)')
+end
+
+%simulation info
+nSims = prefs.nSims; %number of experiments to simulate
+sub_vector = prefs.N_range; %number of subs per simulation
+trial_vector = fliplr(prefs.trial_range); %number of trials per condition
+nComps = size(prefs.comps, 1); %number of comparisons of interest
+nConds = size(prefs.data,2); %number of conditions
+
+%preallocate
+power = zeros(length(trial_vector), length(sub_vector));
+sample_size = zeros(length(trial_vector), length(sub_vector));
+subs_by_cond = cell(length(trial_vector), length(sub_vector));
+num_trials = zeros(length(trial_vector), length(sub_vector));
+ds_vect = cell(1, nComps);
+nPilotSubs = zeros(1, nConds);
+for c = 1:nConds
+   nPilotSubs(c) = sum(~isnan(prefs.data(:,c))); %how many subjects in actual data per condition 
+end
+
+
+for trial_count= 1:length(trial_vector)
+    
+    t = trial_vector(trial_count);
+    
+    %determine condition difference pdf for each subject in pilot data
+    cFinal = cell(1, nConds);
+    outcomes = 0:t;
+    
+    %calculate measurement variability for each subject based upon 
+    %condition means and number of trials
+    
+    cond_prob = cell(1, nConds);
+    for c = 1:nConds
+        for n = 1:nPilotSubs(c)
+            cond_prob{c}(n,:) = binopdf(0:t, t, prefs.data(n,c));
+        end
+        cFinal{c} = mean(cond_prob{c});
+    end
+    
+    
+    %figure out sampling variability based upon number of subjects
+    for sub_count = 1:length(sub_vector)
+        
+        clc
+        disp([num2str(round(100*((trial_count-1)*length(sub_vector) + sub_count - 1)...
+            /(length(trial_vector)*length(sub_vector)))), '% Complete']);
+        
+        %number of subjects to simulate per condition
+        
+        nSubs_Total = sub_vector(sub_count);
+        outcome_samples = cell(1, nConds);
+        nSubs = zeros(1,nConds);
+
+        for c = 1:nConds
+            nSubs(c) = round(nSubs_Total*prefs.condition_allocation(c));
+            outcome_samples{c} = randsample(outcomes, nSims*nSubs(c), 'true', cFinal{c});
+        end
+
+        subs_by_cond{trial_count, sub_count} = nSubs;
+        sample_size(trial_count, sub_count) = nSubs_Total;
+        num_trials(trial_count, sub_count) = t;
+        
+        
+        % do condition comparisons
+        %p = cell(1, nComps);
+        power_marker = zeros(nComps, nSims);
+        for comp = 1:nComps
+            c1 = reshape(outcome_samples{prefs.comps(comp,1)}, nSubs(prefs.comps(comp,1)), nSims);
+            c2 = reshape(outcome_samples{prefs.comps(comp,2)}, nSubs(prefs.comps(comp,2)), nSims);
+            ds_vect{comp}{trial_count, sub_count} = (mean(c1) - mean(c2)) ./...
+                (((nSubs(prefs.comps(comp,1)) - 1)*(std(c1).^2) + (nSubs(prefs.comps(comp,2)) - 1)*(std(c2).^2))/(nSubs(prefs.comps(comp,1)) + nSubs(prefs.comps(comp,2)) - 2)).^.5;
+            [~,p] = ttest2(c1,c2);
+            power_marker(comp, :) = p < prefs.alpha & ds_vect{comp}{trial_count, sub_count} > 0;
+        end
+        
+        power(trial_count, sub_count) = mean(all(power_marker, 1));
+    end
+end
+
+clc
+disp('100% Complete')
+
+%output information
+power_results.power = power; %power for each simulated design
+power_results.n = sample_size; %sample size for each simulated design
+power_results.num_trials = num_trials; %number of trials for each design
+power_results.ds_vect = ds_vect; %effect size vector for each design
+power_results.sub_by_cond = subs_by_cond;  %subs in each cond for each design
+
+%plot
+figure(1)
+clf
+
+power = round(power, 2);
+if all(all(power == 0))
+    xlim([0,1])
+    ylim([0,1])
+    text(.27, .5,'Cannot Display Heatmap', 'FontSize', 20)
+    text(.2, .4,'Power for all study designs is 0%', 'FontSize', 20)
+else
+    
+    heatmap(power, sub_vector, trial_vector, true, 'GridLines', '-', 'FontSize', 14);
+    xlabel('# of Subjects', 'FontSize', 20)
+    ylabel('# of Trials Per Condition', 'FontSize', 20)
+    title('Power by N and # of Trials', 'FontSize', 20)
+end
 end
 
 
