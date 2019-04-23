@@ -1,9 +1,9 @@
 # PowerAnalysis
 Matlab scripts for simulating power based upon pilot data. Currently works for the following study designs:
-1) single-factor between-subjects designs
-2) single-factor within-subjects designs
-3) two-factor within-subjects designs
-4) two-factor mixed-factor designs
+1) single-factor between-subjects designs (using independent samples t-tests)
+2) single-factor within-subjects designs (using paired-samples t-tests)
+3) two-factor within-subjects designs (using using ANOVA and t-tests)
+4) two-factor mixed-factor designs (using using ANOVA and t-tests)
 
 Still to come:
 - two factor between-subjects designs
