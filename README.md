@@ -6,6 +6,7 @@ Matlab scripts for simulating power based upon pilot data. Currently works for t
 4) two-factor mixed-factor designs (using ANOVA and t-tests)
 
 Still to come:
+- web-based version (R Shiny)
 - two factor between-subjects designs
 - analyses other than t-tests/ANOVA (e.g., mixed-effect modeling)
 - data trimming, exclusion criteria, data transforms
